@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+**/open5gs-ue.yaml
+results/
+**/results/
+build/
+**/build/
+*.log
+*.pcap
+*.tar.gz
