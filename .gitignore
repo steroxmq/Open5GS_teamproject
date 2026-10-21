@@ -9,3 +9,5 @@ build/
 *.log
 *.pcap
 *.tar.gz
+
+/docker/ueransim/ue.yaml

@@ -1,0 +1,207 @@
+name: open5gs-ueransim
+
+services:
+  mongo:
+    image: mongo:6.0
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+      - ./docker/open5gs/config/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      core:
+        ipv4_address: 172.18.0.2
+
+  webui:
+    image: gradiant/open5gs-webui:2.8.0
+    restart: unless-stopped
+    environment:
+      DB_URI: mongodb://mongo/open5gs
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "9998:9999"
+    networks:
+      core:
+        ipv4_address: 172.18.0.3
+
+  nrf:
+    <<: &open5gs
+      image: gradiant/open5gs:2.8.0
+      restart: unless-stopped
+      environment:
+        DB_URI: mongodb://mongo/open5gs
+      depends_on:
+        mongo:
+          condition: service_healthy
+    command: ["open5gs-nrfd"]
+    volumes:
+      - ./docker/open5gs/config/nrf.yaml:/opt/open5gs/etc/open5gs/nrf.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.10
+
+  scp:
+    <<: *open5gs
+    command: ["open5gs-scpd"]
+    volumes:
+      - ./docker/open5gs/config/scp.yaml:/opt/open5gs/etc/open5gs/scp.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.200
+
+  amf:
+    <<: *open5gs
+    command: ["open5gs-amfd"]
+    volumes:
+      - ./docker/open5gs/config/amf.yaml:/opt/open5gs/etc/open5gs/amf.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.5
+
+  smf:
+    <<: *open5gs
+    command: ["open5gs-smfd"]
+    volumes:
+      - ./docker/open5gs/config/smf.yaml:/opt/open5gs/etc/open5gs/smf.yaml:ro
+      - ./docker/open5gs/config/smf.conf:/opt/open5gs/etc/freeDiameter/smf.conf:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.4
+
+  upf:
+    <<: *open5gs
+    user: "0:0"
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        ip link show dev ogstun >/dev/null 2>&1 || ip tuntap add name ogstun mode tun
+        ip addr replace 10.45.0.1/16 dev ogstun
+        ip link set dev ogstun up
+        iptables -t nat -C POSTROUTING -s 10.45.0.0/16 -o eth0 -j MASQUERADE 2>/dev/null ||
+          iptables -t nat -A POSTROUTING -s 10.45.0.0/16 -o eth0 -j MASQUERADE
+        exec open5gs-upfd
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    volumes:
+      - ./docker/open5gs/config/upf.yaml:/opt/open5gs/etc/open5gs/upf.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.7
+
+  ausf:
+    <<: *open5gs
+    command: ["open5gs-ausfd"]
+    volumes:
+      - ./docker/open5gs/config/ausf.yaml:/opt/open5gs/etc/open5gs/ausf.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.11
+
+  udm:
+    <<: *open5gs
+    command: ["open5gs-udmd"]
+    volumes:
+      - ./docker/open5gs/config/udm.yaml:/opt/open5gs/etc/open5gs/udm.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.12
+
+  udr:
+    <<: *open5gs
+    command: ["open5gs-udrd"]
+    volumes:
+      - ./docker/open5gs/config/udr.yaml:/opt/open5gs/etc/open5gs/udr.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.20
+
+  pcf:
+    <<: *open5gs
+    command: ["open5gs-pcfd"]
+    volumes:
+      - ./docker/open5gs/config/pcf.yaml:/opt/open5gs/etc/open5gs/pcf.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.13
+
+  nssf:
+    <<: *open5gs
+    command: ["open5gs-nssfd"]
+    volumes:
+      - ./docker/open5gs/config/nssf.yaml:/opt/open5gs/etc/open5gs/nssf.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.14
+
+  bsf:
+    <<: *open5gs
+    command: ["open5gs-bsfd"]
+    volumes:
+      - ./docker/open5gs/config/bsf.yaml:/opt/open5gs/etc/open5gs/bsf.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.15
+
+  gnb:
+    image: open5gs-ueransim:amf-fix
+    build:
+      context: ./docker/ueransim
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["gnb"]
+    environment:
+      AMF_HOSTNAME: amf
+      AMF_IP: 172.18.0.5
+      N2_BIND_IP: 172.18.0.21
+      N3_BIND_IP: 172.18.0.21
+      N3_ADVERTISE_IP: 172.18.0.21
+      RADIO_BIND_IP: 172.18.0.21
+    depends_on:
+      amf:
+        condition: service_started
+    volumes:
+      - ./docker/ueransim/gnb.yaml:/etc/ueransim/gnb.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.21
+
+  ue:
+    image: open5gs-ueransim:amf-fix
+    restart: unless-stopped
+    command: ["ue"]
+    env_file:
+      - .env
+    environment:
+      GNB_HOSTNAME: gnb
+    depends_on:
+      gnb:
+        condition: service_started
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./docker/ueransim/ue.yaml.template:/etc/ueransim/ue.yaml:ro
+    networks:
+      core:
+        ipv4_address: 172.18.0.22
+
+networks:
+  core:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/24
+          gateway: 172.18.0.1
+
+volumes:
+  mongo-data:
