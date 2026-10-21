@@ -3,6 +3,138 @@
 Vyukove prostredie 5G SA: Open5GS + UERANSIM. Overena verzia s Docker Compose
 je dostupna vo vetve `main`.
 
+Obsah:
+
+- [Ako lab funguje](#ako-lab-funguje)
+- [Instalacia a spustenie](#docker-compose-overena-konfiguracia)
+- [Meranie TCP a UDP](#6-meranie-tcp-a-udp-v-aktivnom-labe)
+- [Protokol overeneho merania](docs/measurements/compose-2026-10-21.md)
+
+## Ako lab funguje
+
+Lab vytvara softverove prostredie 5G SA: UERANSIM simuluje telefon (UE)
+a zakladnovu stanicu (gNB), Open5GS zabezpecuje jadro siete. Mozeme sledovat
+registraciu ucastnika, vytvorenie datovej relacie a prenos IP paketov.
+Radiove rozhranie UERANSIM je simulovane cez UDP; lab neposkytuje plnu
+simulaciu fyzickej vrstvy 5G NR. Namerane rychlosti preto charakterizuju
+toto softverove prostredie a vykon VM.
+
+### Ulohy jednotlivych casti
+
+| Cast | Uloha v labe |
+| --- | --- |
+| UE | Softverovy telefon; cez rozhranie `uesimtun0` odosiela a prijima IP pakety. |
+| gNB | Softverova zakladnova stanica medzi UE a jadrom Open5GS. |
+| AMF | Riadi registraciu, pripojenie a mobilitu UE. |
+| SMF | Riadi datovu relaciu PDU a nastavuje spracovanie paketov v UPF. |
+| UPF | Spracuva pouzivatelske pakety a zabezpecuje ich prechod do externej IP siete. |
+| AUSF, UDM, UDR | Zabezpecuju overenie identity a spracovanie udajov ucastnika. |
+| NRF, SCP | Umoznuju vyhladavanie sietovych funkcii a sprostredkovanie komunikacie medzi nimi. |
+| PCF, NSSF, BSF | Podporuju pravidla siete, vyber slice a evidenciu vazieb na sluzby. |
+| MongoDB, WebUI | Databaza uchovava udaje; cez WebUI vytvarame a upravujeme ucastnika. |
+
+### Riadenie siete a prenos dat
+
+**Riadiaca rovina (control plane)** organizuje registraciu a relaciu PDU.
+**Pouzivatelska rovina (user plane)** prenasa pakety aplikacii, napr. ping
+alebo iperf3. Schema oddeluje tieto dve ulohy:
+
+```mermaid
+flowchart TB
+    UE["UE - telefon"] -->|"RLS / UDP 4997"| GNB["gNB - zakladnova stanica"]
+    GNB -->|"N3: GTP-U / UDP 2152"| UPF["UPF - prenos IP paketov"]
+    UPF -->|"NAT a pripojenie Docker hosta"| NET["Internet"]
+    GNB -.->|"N2: NGAP / SCTP 38412"| AMF["AMF - registracia"]
+    AMF -.->|"SBI cez SCP"| SMF["SMF - relacia PDU"]
+    SMF -.->|"N4: PFCP / UDP 8805"| UPF
+```
+
+Plne sipky ukazuju prenos dat v smere UL; v smere DL sa data vracaju
+opacne. Prerusovane sipky oznacuju riadiace vztahy. Schema je zjednodusena:
+pomocne funkcie a odpovede na riadiace spravy nie su zakreslene.
+
+GTP-U prenasa povodny paket v tuneli medzi gNB a UPF. Vonkajsi prenos je
+UDP na porte 2152, aj ked je vo vnutri paket TCP alebo ICMP. Preto vidiet
+UDP v zazname `tcpdump` automaticky neznamena, ze bezi test UDP.
+
+### Od spustenia po prvy paket
+
+1. gNB nadviaze spojenie s AMF a dokonci postup NG Setup.
+2. UE najde gNB a zacne registraciu do siete. Jadro overi identitu ucastnika.
+3. UE poziada o relaciu PDU pre DNN `internet`. SMF riadi jej vytvorenie
+   a nastavenie UPF.
+4. UE ziska adresu IPv4 a rozhranie `uesimtun0`. Paket z aplikacie moze prejst
+   cez UE, gNB a UPF k cielu; odpoved sa vracia rovnakym datovym traktom.
+
+Udaje UE musia zodpovedat zaznamu ucastnika v Open5GS: najma IMSI,
+autentizacne kluce a parametre DNN a slice. V tomto projekte pouzivame
+PLMN `999/70`, IMSI `999700000000001`, DNN `internet` a SST `1`.
+Relacia PDU predstavuje datove pripojenie UE do zvolenej datovej siete.
+
+### Preco ma UE dve adresy
+
+| Siet alebo rozhranie | Priklad v tomto projekte | Vyuzitie |
+| --- | --- | --- |
+| Docker siet `core` | `172.18.0.0/24` | Prepojenie kontajnerov; gNB ma `.21`, UE `.22` a UPF `.7`. |
+| UE `uesimtun0` | Napr. `10.45.0.3` | Adresa telefonu pridelena pri vytvoreni relacie PDU; moze sa zmenit. |
+| UPF `ogstun` | `10.45.0.1/16` | Rozhranie IP siete ucastnikov na strane UPF. |
+
+Adresa kontajnera UE `172.18.0.22` sluzi na komunikaciu kontajnera v sieti
+Docker. Adresa `10.45.0.x` patri simulovanemu telefonu. Prikaz
+`ping -I uesimtun0 ...` vyberie datovy trakt telefonu. Ping cez bezne
+rozhranie `eth0` kontajnera by preveroval inu trasu.
+
+UPF pri komunikacii do internetu preklada zdrojove adresy UE pomocou NAT
+na svojom `eth0`; dalsie presmerovanie zabezpecuje siet Docker a hostitelska
+VM. Ping na `10.45.0.1` overuje dosiahnutelnost UPF, ping na `1.1.1.1`
+navyse overuje cestu do internetu.
+
+### Co prinasaju Docker Compose a Git
+
+Subor `compose.yaml` definuje sluzby, obrazy, siete, opravnenia, pripojene
+konfiguracie a zvazky. Git uchovava spolocne verzie tychto suborov,
+Dockerfile a skriptov. Clenovia timu tak mozu pouzit rovnaky commit
+a rovnaky postup spustenia.
+
+Kazdy clen si pripravi vlastny subor `.env` a zaznam ucastnika so zhodnymi
+klucmi vo svojej databaze. `.env` nie je sledovany Gitom. Git neprenasa
+beziace kontajnery ani obsah databazy; MongoDB si ho v danom prostredi
+uchovava vo zvazku `mongo-data`.
+
+Rovnaka konfiguracia nezarucuje rovnaky vykon. Vysledky ovplyvnuju CPU,
+RAM, jadro Linuxu, virtualizacia a dalsia zataz. Pri porovnavani preto
+zaznamenavame verzie, obrazy a rovnake parametre testu. Stav kontajnera
+`Up` potvrdzuje jeho beh; funkcnost pripojenia overujeme registraciou,
+relaciou PDU a skutocnym prenosom paketov.
+
+### Co znamenaju vysledky merania
+
+| Metrika | Vyznam |
+| --- | --- |
+| UL / DL | Smer UE -> UPF / UPF -> UE. |
+| Priepustnost prijimaca | Kolko uzitocnych dat prijimac prijal za sekundu, v Mbit/s. |
+| RTT | Cas cesty paketu ping k cielu a odpovede spat, v ms. |
+| Straty UDP | Podiel stratenych datagramov z celkoveho poctu. |
+| Jitter UDP | Odhad kolisania prenosoveho oneskorenia UDP datagramov, v ms. |
+| Opakovane prenosy TCP | Pocet opakovanych prenosov hlasenych TCP odosielatelom. |
+
+Meraci server je na UPF `10.45.0.1`. iperf3 preto meria usek UE - gNB - UPF;
+pristup do internetu overujeme osobitne. Pri UDP sa straty hodnotia priamo,
+pri TCP sledujeme opakovane prenosy. Tieto dve hodnoty nie su zamenitelne.
+RTT sa v nasom skripte meria pred zatazou a jitter pochadza z testov UDP.
+
+Predvolene testujeme TCP pri 50 Mbit/s a UDP pri 5 Mbit/s, tri opakovania
+kazdeho smeru. Median je prostredna z troch nameranych hodnot. Vysledok
+okolo 50 Mbit/s pri cieli 50 Mbit/s potvrdzuje dosiahnutie zadanej zataze;
+neurcuje maximalnu priepustnost labu ani realnej radiovej siete 5G.
+
+Podklady k teorii:
+
+- [Open5GS: architektura a konfiguracia jadra](https://open5gs.org/open5gs/docs/guide/01-quickstart/)
+- [UERANSIM: UE, gNB a obmedzenia simulacie](https://github.com/aligungr/UERANSIM)
+- [Docker Compose: spolocna definicia prostredia](https://docs.docker.com/compose/intro/features-uses/)
+- [iperf3: merania, smery a parametre](https://software.es.net/iperf/invoking.html)
+
 ## Docker Compose: overena konfiguracia
 
 Overene 21.10.2026 na Ubuntu 22.04 x86_64 vo VirtualBoxe: 4 GB RAM,
