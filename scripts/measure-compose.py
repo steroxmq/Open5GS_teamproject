@@ -10,7 +10,9 @@ import math
 import os
 from pathlib import Path
 import platform
+import pwd
 import re
+import shlex
 import shutil
 import signal
 import statistics
@@ -22,6 +24,8 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 SERVER_IP = "10.45.0.1"
 PORT = 5202
+IPERF3_VERSION = "3.21"
+IPERF3 = "iperf3"
 ENV = dict(os.environ, LC_ALL="C")
 
 
@@ -54,7 +58,7 @@ def command(argv, timeout=15, output=None, errors=None):
                 proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 stop_process(proc)
-                raise LabError("Casovy limit: " + " ".join(map(str, argv[:5])))
+                raise LabError(f"Casovy limit ({timeout} s): " + shlex.join(list(map(str, argv))))
             except BaseException:
                 stop_process(proc)
                 raise
@@ -85,6 +89,22 @@ def dc(*args, **kwargs):
 
 def namespace(pid, *args):
     return ["nsenter", "--no-fork", "-t", str(pid), "-n", "--", *map(str, args)]
+
+
+def select_iperf3(candidate=None):
+    if candidate is None:
+        uid = int(os.environ.get("SUDO_UID", os.getuid()))
+        user_home = Path(pwd.getpwuid(uid).pw_dir)
+        candidate = user_home / ".local/open5gs-lab" / f"iperf3-{IPERF3_VERSION}/bin/iperf3"
+    binary = Path(candidate).expanduser().resolve()
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        raise LabError("Chyba izolovany iperf3: " + str(binary) +
+                       ". Ako bezny pouzivatel spustite bash scripts/setup-lab-iperf3.sh.")
+    version = command([str(binary), "--version"])
+    if not re.match(r"^iperf " + re.escape(IPERF3_VERSION) + r"(?:\s|$)", version):
+        first_line = (version.splitlines() or ["prazdny vystup"])[0]
+        raise LabError(f"Ocakavana verzia iperf3 je {IPERF3_VERSION}; zistene: " + first_line)
+    return str(binary), version
 
 
 def container(service):
@@ -223,14 +243,14 @@ def trial(ue, upf, ue_ip, folder, protocol, direction, run, args):
     if command(namespace(upf["pid"], "ss", "-H", "-ltn", f"sport = :{PORT}")):
         raise LabError(f"Port {PORT} v UPF je obsadeny. Pozrite existujuci proces iperf3 v tomto namespace.")
     rate = args.tcp_rate if protocol == "TCP" else args.udp_rate
-    client_args = ["iperf3", "-4", "-c", SERVER_IP, "-p", str(PORT), "-B", ue_ip,
+    client_args = [IPERF3, "-4", "-c", SERVER_IP, "-p", str(PORT), "-B", ue_ip,
                    "-t", str(args.duration), "-P", "1", "-b", rate, "--connect-timeout", "3000", "-J"]
     if protocol == "UDP":
         client_args += ["-u", "-l", "1200"]
     if direction == "DL":
         client_args += ["-R"]
     server_args = ["timeout", "--signal=TERM", "--kill-after=2s", str(args.duration + 20) + "s",
-                   *namespace(upf["pid"], "iperf3", "-4", "-s", "-B", SERVER_IP, "-p", PORT, "-1", "-J")]
+                   *namespace(upf["pid"], IPERF3, "-4", "-s", "-B", SERVER_IP, "-p", PORT, "-1", "-J")]
     (folder / f"{label}-commands.json").write_text(json.dumps(dict(server=server_args,
                                             client=namespace(ue["pid"], *client_args)), indent=2) + "\n")
     with paths["server.json"].open("w") as out, paths["server.stderr"].open("w") as err:
@@ -267,11 +287,13 @@ def trial(ue, upf, ue_ip, folder, protocol, direction, run, args):
 
 
 def main():
+    global IPERF3
     parser = argparse.ArgumentParser(description="Meranie aktivneho Compose labu, vysledky v results/iperf-*.")
     parser.add_argument("--duration", type=int, default=5, help="sekundy na test (1-30, predvolene 5)")
     parser.add_argument("--repeats", type=int, default=3, help="opakovania kazdeho smeru a protokolu (1-10)")
     parser.add_argument("--tcp-rate", default="50M", help="ciel TCP, 0 vypne obmedzenie (predvolene 50M)")
     parser.add_argument("--udp-rate", default="5M", help="kladny ciel UDP (predvolene 5M)")
+    parser.add_argument("--iperf3", type=Path, help="explicitna cesta k binarke iperf3 3.21")
     args = parser.parse_args()
     if not 1 <= args.duration <= 30 or not 1 <= args.repeats <= 10:
         parser.error("duration musi byt 1-30 a repeats 1-10")
@@ -280,9 +302,9 @@ def main():
             parser.error(f"Neplatny ciel {name}: {rate}")
     if os.geteuid() != 0:
         parser.error("Spustite: sudo python3 scripts/measure-compose.py")
-    for tool in ["docker", "nsenter", "iperf3", "ip", "ss", "ping", "timeout"]:
+    for tool in ["docker", "nsenter", "ip", "ss", "ping", "timeout"]:
         if not shutil.which(tool):
-            parser.error(f"Chyba {tool}. Pre iperf3 pouzite sudo apt install iperf3.")
+            parser.error(f"Chyba {tool}.")
     if not (ROOT / "compose.yaml").is_file():
         parser.error("Skript musi byt v scripts/ vedla projektu compose.yaml.")
     owner = (int(os.environ["SUDO_UID"]), int(os.environ["SUDO_GID"])) if os.environ.get("SUDO_UID") else None
@@ -314,7 +336,10 @@ def main():
     old_term = signal.signal(signal.SIGTERM, interrupt)
     try:
         print("Meranie Compose labu. Vysledky: " + str(folder), flush=True)
-        metadata["iperf3_version"] = command(["iperf3", "--version"])
+        IPERF3, metadata["iperf3_version"] = select_iperf3(args.iperf3)
+        metadata["iperf3_path"] = IPERF3
+        metadata["iperf3_binary_sha256"] = hashlib.sha256(Path(IPERF3).read_bytes()).hexdigest()
+        print("Pouzivam iperf3 " + IPERF3_VERSION + ": " + IPERF3, flush=True)
         command(["docker", "info", "--format", "{{.ServerVersion}}"])
         dc("config", "-q")
         ue, upf = container("ue"), container("upf")

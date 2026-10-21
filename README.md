@@ -148,17 +148,31 @@ pouzivaju nazov rozhrania.
 
 ### 6. Meranie TCP a UDP v aktivnom labe
 
-Po uspesnom automatickom spusteni mozete spustit meranie:
+Pred prvym meranim pripravte izolovany iperf3 **3.21**. Instalacny skript
+spustite ako bezny pouzivatel:
+
+```bash
+sudo apt-get install -y build-essential curl ca-certificates
+bash scripts/setup-lab-iperf3.sh
+```
+
+Skript overi SHA-256 oficialneho zdrojoveho archivu, skompiluje ho prikazom
+`make -j1` a ulozi binarku do
+`~/.local/open5gs-lab/iperf3-3.21/bin/iperf3`. Pouziva vlastnu staticku
+kniznicu libiperf. Ak instalacia skonci chybou, vypise umiestnenie logov.
+
+Po uspesnom automatickom spusteni labu spustite meranie:
 
 ```bash
 sudo python3 scripts/measure-compose.py
 ```
 
-Na Ubuntu VM musia byt dostupne Python 3, iperf3 a nastroje `nsenter`, `ip`,
-`ss`, `ping` a `timeout`. Chybajuci iperf3 nainstalujte prikazom
-`sudo apt install iperf3`. Klient aj server pouziju rovnaku hostitelsku binarku
-iperf3 v sietovych mennych priestoroch kontajnerov UE a UPF. Verzia iperf3
-a identifikatory obrazov kontajnerov sa ulozia do metadat merania.
+Meraci skript automaticky najde binarku pouzivatela, ktory zavolal `sudo`,
+a overi verziu 3.21. Klient aj server pouziju jej absolutnu cestu v sietovych
+mennych priestoroch kontajnerov UE a UPF. Systemova verzia z PATH sa automaticky
+nepouzije. Na Ubuntu VM musia byt dostupne Python 3 a nastroje `nsenter`, `ip`,
+`ss`, `ping` a `timeout`. Verzia, cesta a SHA-256 binarky aj identifikatory
+obrazov kontajnerov sa ulozia do metadat merania.
 
 Skript overi trasu z aktualnej adresy UE cez `uesimtun0` na UPF `10.45.0.1`.
 Pred zatazou odosle 20 paketov ping na UPF. Nasleduju tri opakovania kazdej
@@ -179,16 +193,26 @@ V adresari `results/iperf-*` vzniknu:
 - `report.md` s tabulkou, `ping-upf.txt`, trasa a diagnosticke logy.
 
 Priepustnost sa uvadza na strane prijimaca. Pri UDP sa pocita zo skutocne
-prijatych bajtov a casu v intervaloch prijimaca, aby sa zohladnil aj format
-starsej verzie iperf3 3.9. Celkove percento strat UDP v skupine sa pocita ako
+prijatych bajtov a casu v intervaloch prijimaca. Celkove percento strat UDP v skupine sa pocita ako
 100 * sucet stratenych paketov / sucet paketov. Jitter v suhrne predstavuje
 median zaverecnych hodnot prijimaca. ICMP RTT sa uvadza samostatne pred zatazou.
 
 Parametre zobrazi `python3 scripts/measure-compose.py --help`. Pri porovnavani
 pouzite zhodne ciele bitrate, trvanie, pocet opakovani a verziu iperf3.
 Vypocty metrik a spracovanie chyb boli overene simulovanymi scenarmi.
-Prikazy a JSON oboch smerov TCP aj UDP boli overene so skutocnym iperf3 3.9
-na lokalnom spojeni. Skript merania zatial nebol overeny v skutocnom 5G labe.
+Prikazy a JSON oboch smerov TCP aj UDP boli overene s iperf3 3.21 na lokalnom
+spojeni. V Compose labe bola 21.10.2026 s iperf3 3.21 dokoncena cela seria:
+12/12 testov, tri behy TCP UL, TCP DL, UDP UL a UDP DL, kazdy po 5 sekund.
+Median prijimaca bol 49,885 Mbit/s pre TCP UL, 49,881 Mbit/s pre TCP DL,
+5,000 Mbit/s pre UDP UL a 4,999 Mbit/s pre UDP DL. UDP nezaznamenalo straty;
+TCP zaznamenalo spolu 52 opakovanych prenosov v UL a 46 v DL.
+Presne hodnoty, parametre, identifikatory a hranice overenia su v
+[zazname merania](docs/measurements/compose-2026-10-21.md).
+
+Systemova verzia iperf3 3.9 v kontrolnej VM pocas TCP UL cakala pri ukonceni
+na zvysok bloku dat, hoci sprava o ukonceni uz bola vo vstupnej fronte
+riadiaceho spojenia. Izolovany iperf3 3.21 tento diagnosticky beh ukoncil
+spravne pri zachovanych kontajneroch UE a UPF.
 
 ### Zastavenie a opatovne spustenie
 
@@ -214,8 +238,9 @@ je opisane v kroku 3.
 Po opatovnom vytvoreni kontajnerov sa rozhranie `ogstun` automaticky obnovilo
 s adresou `10.45.0.1/16`. Test prebehol so zachovanou databazou MongoDB.
 Cista instalacia na druhom pocitaci a automaticke spustenie po uplnom restarte
-VM zatial neboli overene. Merania priepustnosti pomocou iperf3 pre tuto verziu
-s Compose zatial neboli vykonane.
+VM zatial neboli overene. Kompletna seria merani TCP/UDP UL/DL s iperf3 3.21
+bola uspesna pri zadanej zatazi 50/5 Mbit/s. Dalsim krokom je overenie postupu
+na druhom pocitaci podla tohto README.
 
 ## Nativne prostredie - vychodiskovy stav
 
