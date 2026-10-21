@@ -1,7 +1,7 @@
 # Open5GS_teamproject
 
 Vyukove prostredie 5G SA: Open5GS + UERANSIM. Overena verzia s Docker Compose
-je dostupna vo vetve `feat/docker-compose`.
+je dostupna vo vetve `main`.
 
 ## Docker Compose: overena konfiguracia
 
@@ -28,7 +28,7 @@ projekt a nesmie sa prekryvat s inymi pouzivanymi sietami.
 
 ```bash
 sudo systemctl enable --now docker
-git clone --branch feat/docker-compose https://github.com/steroxmq/Open5GS_teamproject.git
+git clone --branch main https://github.com/steroxmq/Open5GS_teamproject.git
 cd Open5GS_teamproject
 cp -n .env.example .env
 chmod 600 .env
