@@ -87,7 +87,35 @@ Ulozte ucastnika. Jeho zaznam sa uchovava vo zvazku `mongo-data`; pri dalsich
 spusteniach ho netreba vytvarat znova. Pri zmene klucov v `.env` upravte aj
 kluce daneho ucastnika vo WebUI, aby sa hodnoty zhodovali.
 
-### 4. Pripojenie gNB a UE
+### 4. Automaticke spustenie existujuceho labu
+
+Po zostaveni obrazu a vytvoreni ucastnika mozete cely postup spustit prikazom:
+
+```bash
+bash scripts/compose-up.sh
+```
+
+Skript pouzije sudo pre Docker, spusti jadro siete a pocka na inicializaciu
+AMF, SMF a UPF. Overi pritomnost jedneho zaznamu ucastnika v MongoDB, obnovi
+gNB, pocka na uspesny NG Setup a potom obnovi UE. Po vytvoreni rozhrania TUN
+overi aktualny stav registracie a relacie PDU. Nakoniec posle po tri pakety
+ping na UPF a internet. Obnova gNB a UE prerusi ich existujuce spojenie.
+
+Logy, stav kontajnerov, adresa UE a vysledky ping sa ulozia do noveho adresara
+`results/compose-*`. Pri chybe skript vrati nenulovy kod a vypise cestu k logom.
+Kontajnery zostanu spustene. Ak zaznam ucastnika chyba, vytvorte ho vo WebUI
+podla kroku 3 a spustite skript znova.
+
+Skript ocakava existujuci lokalny obraz `open5gs-ueransim:amf-fix`. Pre nove
+prostredie najprv vykonajte zostavenie z kroku 2. Limit cakania na jednu fazu
+je predvolene 120 sekund a mozno ho zmenit premennou `LAB_WAIT_SECONDS`.
+Moznosti zobrazi `bash scripts/compose-up.sh --help`.
+
+Logiku skriptu overili simulovane scenare Docker CLI; jeho beh so skutocnym
+5G labom zatial nebol overeny. Vyssie uvedene merania platia pre povodny
+postup spustenia.
+
+### Rucne pripojenie gNB a UE
 
 ```bash
 sudo docker compose up -d --no-deps gnb
@@ -152,6 +180,6 @@ UE sa zaregistrovalo do siete, ziskalo adresu IPv4 a aktivnu relaciu PDU.
 Test z menneho priestoru UE na adresu 1.1.1.1: 100/100 odpovedi,
 0% strat a priemerne oneskorenie 6,258 ms.
 
-Skript v adresari `scripts/` spusta lokalne gNB a UE. Predpoklada,
+Skript `scripts/demo-open5gs-ueransim.sh` spusta lokalne gNB a UE. Predpoklada,
 ze Open5GS je uz nainstalovany, jeho sluzby su spustene a ucastnik je vytvoreny.
 Ide o nativny variant pre kontrolnu VM, ktory nepouziva Docker Compose.
