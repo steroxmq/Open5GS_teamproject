@@ -111,9 +111,10 @@ prostredie najprv vykonajte zostavenie z kroku 2. Limit cakania na jednu fazu
 je predvolene 120 sekund a mozno ho zmenit premennou `LAB_WAIT_SECONDS`.
 Moznosti zobrazi `bash scripts/compose-up.sh --help`.
 
-Logiku skriptu overili simulovane scenare Docker CLI; jeho beh so skutocnym
-5G labom zatial nebol overeny. Vyssie uvedene merania platia pre povodny
-postup spustenia.
+Automaticky skript bol overeny 21.10.2026 na skutocnom Compose labe
+s commitom `cf04c39`: UE ziskal adresu `10.45.0.3`, UPF aj internet odpovedali
+na 3/3 pakety bez strat. Priemerny RTT bol 1,057 ms na UPF a 3,772 ms
+na internet. Adresa UE sa pri dalsom spusteni moze zmenit.
 
 ### Rucne pripojenie gNB a UE
 
@@ -145,6 +146,50 @@ Rozhranie `ogstun` musi mat adresu `10.45.0.1/16`; pri oboch testoch ping musia
 prichadzat odpovede. IP adresa UE sa prideluje dynamicky, preto prikazy
 pouzivaju nazov rozhrania.
 
+### 6. Meranie TCP a UDP v aktivnom labe
+
+Po uspesnom automatickom spusteni mozete spustit meranie:
+
+```bash
+sudo python3 scripts/measure-compose.py
+```
+
+Na Ubuntu VM musia byt dostupne Python 3, iperf3 a nastroje `nsenter`, `ip`,
+`ss`, `ping` a `timeout`. Chybajuci iperf3 nainstalujte prikazom
+`sudo apt install iperf3`. Klient aj server pouziju rovnaku hostitelsku binarku
+iperf3 v sietovych mennych priestoroch kontajnerov UE a UPF. Verzia iperf3
+a identifikatory obrazov kontajnerov sa ulozia do metadat merania.
+
+Skript overi trasu z aktualnej adresy UE cez `uesimtun0` na UPF `10.45.0.1`.
+Pred zatazou odosle 20 paketov ping na UPF. Nasleduju tri opakovania kazdej
+kombinacie TCP/UDP a UL/DL: spolu 12 testov po 5 sekundach. UL znamena
+UE -> UPF, DL znamena UPF -> UE. Pred kazdym testom sa spusti server iperf3
+viazany na adresu `10.45.0.1`, port 5202. Proces servera ma casovy limit.
+
+Predvoleny ciel TCP je **50 Mbit/s**, ciel UDP **5 Mbit/s** a velkost datagramu
+UDP 1200 bajtov. Ide o meranie pri zadanej zatazi, nie o urcenie maximalnej
+priepustnosti. Kazdy test pouziva jeden datovy tok. Cely uspesny postup trva
+priblizne 1-2 minuty; pri chybe sa zastavi a ulozi dostupne vysledky.
+
+V adresari `results/iperf-*` vzniknu:
+
+- povodne JSON a chybove vystupy klienta a servera pre kazdy test;
+- `runs.csv` s hodnotami jednotlivych behov;
+- `summary.json` s metadatami a suhrnnymi hodnotami;
+- `report.md` s tabulkou, `ping-upf.txt`, trasa a diagnosticke logy.
+
+Priepustnost sa uvadza na strane prijimaca. Pri UDP sa pocita zo skutocne
+prijatych bajtov a casu v intervaloch prijimaca, aby sa zohladnil aj format
+starsej verzie iperf3 3.9. Celkove percento strat UDP v skupine sa pocita ako
+100 * sucet stratenych paketov / sucet paketov. Jitter v suhrne predstavuje
+median zaverecnych hodnot prijimaca. ICMP RTT sa uvadza samostatne pred zatazou.
+
+Parametre zobrazi `python3 scripts/measure-compose.py --help`. Pri porovnavani
+pouzite zhodne ciele bitrate, trvanie, pocet opakovani a verziu iperf3.
+Vypocty metrik a spracovanie chyb boli overene simulovanymi scenarmi.
+Prikazy a JSON oboch smerov TCP aj UDP boli overene so skutocnym iperf3 3.9
+na lokalnom spojeni. Skript merania zatial nebol overeny v skutocnom 5G labe.
+
 ### Zastavenie a opatovne spustenie
 
 Prikaz `sudo docker compose stop` zastavi kontajnery. Prikaz
@@ -164,6 +209,7 @@ je opisane v kroku 3.
 | UE -> UPF `10.45.0.1` | 5/5 | 0% | 0,799 ms | 1,262 ms |
 | UE -> internet, 100 paketov za ~100 s | 100/100 | 0% | 3,134 ms | 7,858 ms |
 | UE -> internet po opatovnom vytvoreni kontajnerov | 5/5 | 0% | 2,780 ms | 3,752 ms |
+| UE -> internet po automatickom spusteni | 3/3 | 0% | 3,772 ms | 4,174 ms |
 
 Po opatovnom vytvoreni kontajnerov sa rozhranie `ogstun` automaticky obnovilo
 s adresou `10.45.0.1/16`. Test prebehol so zachovanou databazou MongoDB.
