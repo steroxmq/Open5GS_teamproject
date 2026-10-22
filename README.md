@@ -324,6 +324,11 @@ Pre ich lokalne zobrazenie pouzite `nano .env` v dalsom terminali.
 | APN / DNN | `internet` |
 | Typ relacie PDU | IPv4v6 |
 
+<img width="1079" height="714" alt="image" src="https://github.com/user-attachments/assets/d8b787db-e425-450b-839c-d7f51094793d" />
+<img width="1079" height="714" alt="image" src="https://github.com/user-attachments/assets/f9c71fc4-dd1e-47bd-870e-291b3389e406" />
+<img width="1079" height="714" alt="image" src="https://github.com/user-attachments/assets/2a010c96-5111-4d9f-aaee-6bb36eb3b68c" />
+
+
 Ulozte ucastnika. Jeho zaznam sa uchovava vo zvazku `mongo-data`; pri dalsich
 spusteniach ho netreba vytvarat znova. Pri zmene klucov v `.env` upravte aj
 kluce daneho ucastnika vo WebUI, aby sa hodnoty zhodovali.
