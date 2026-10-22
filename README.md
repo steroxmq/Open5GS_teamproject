@@ -322,7 +322,7 @@ Pre ich lokalne zobrazenie pouzite `nano .env` v dalsom terminali.
 | Slice SST | `1` |
 | Slice SD | Nezadane |
 | APN / DNN | `internet` |
-| Typ relacie PDU | IPv4 |
+| Typ relacie PDU | IPv4v6 |
 
 Ulozte ucastnika. Jeho zaznam sa uchovava vo zvazku `mongo-data`; pri dalsich
 spusteniach ho netreba vytvarat znova. Pri zmene klucov v `.env` upravte aj
