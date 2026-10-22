@@ -154,29 +154,135 @@ opravy spracovania NAS a vyberu AMF.
 
 ### 1. Priprava Linuxu a repozitara
 
-Potrebne su Git, Docker Engine s Compose, pristup k `/dev/net/tun` a podpora
-SCTP v jadre Linuxu. Siet Docker `172.18.0.0/24` musi byt k dispozicii pre tento
-projekt a nesmie sa prekryvat s inymi pouzivanymi sietami.
+Prikazy vykonavajte **v terminali Ubuntu VM ako bezny pouzivatel**; `sudo`
+je uvedene tam, kde je potrebne. Pre zopakovanie kontrolneho prostredia
+pouzite Ubuntu 22.04 x86_64. Predpoklada sa pristup na internet a opravnenie
+pouzivat `sudo`. Postup nevyzaduje predchadzajucu nativnu instalaciu Open5GS,
+UERANSIM ani fyzicku SIM kartu.
+
+#### Priprava nastrojov a Dockeru
+
+Nainstalujte nastroje potrebne na pripravu, spustenie a nasledne meranie:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git python3 nano curl ca-certificates build-essential iproute2 iputils-ping util-linux coreutils kmod
+```
+
+Ak Docker este nemate, najprv nainstalujte **Docker Engine, Buildx a Compose
+plugin** podla [oficialneho navodu pre Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
+Potom overte sluzbu, Compose a pristup ku kontajnerom:
 
 ```bash
 sudo systemctl enable --now docker
+sudo docker version
+sudo docker compose version
+sudo docker run --rm hello-world
+```
+
+Pokracujte, ked Docker vypise aj cast `Server`, Compose svoju verziu a test
+`hello-world` sa uspesne skonci. Samotny prikaz `systemctl enable --now docker`
+Docker neinstaluje. Existujucu funkcnu instalaciu netreba preinstalovat.
+
+#### Kontrola siete a jadra Linuxu
+
+Lab potrebuje zariadenie `/dev/net/tun` a podporu SCTP v jadre Ubuntu VM:
+
+```bash
+sudo modprobe tun
+sudo modprobe sctp
+ls -l /dev/net/tun
+ip -4 route
+sudo docker network ls -q | xargs -r sudo docker network inspect \
+  --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}} {{end}}'
+```
+
+Zariadenie `/dev/net/tun` musi existovat a prikazy `modprobe` sa musia skoncit
+bez chyby. Siet projektu `172.18.0.0/24` sa nesmie prekryvat s inou pouzivanou
+sietou Docker, VPN alebo lokalnou sietou. Pri novej instalacii musi byt tento
+rozsah volny; pri dalsom spusteni uz moze patrit sieti tohto projektu
+`open5gs-ueransim_core`. Pri kolizii najprv vyrieste adresny plan, potom
+pokracujte v spusteni.
+
+#### Stiahnutie projektu
+
+```bash
+cd ~
 git clone --branch main https://github.com/steroxmq/Open5GS_teamproject.git
 cd Open5GS_teamproject
 cp -n .env.example .env
 chmod 600 .env
+```
+
+Vsetky dalsie prikazy Compose vykonavajte z adresara `~/Open5GS_teamproject`.
+Ak uz mate vlastnu kopiu repozitara, pouzite jej adresar. `cp -n` ponecha
+existujuci `.env` bez zmeny. Pri pokracovani vo funkcnom labe zachovajte jeho
+kluce a zaznam ucastnika; nevytvarajte nove hodnoty pri kazdom spusteni.
+
+#### Odkial ziskat UE_KEY a UE_OPC
+
+Pri **novej instalacii tohto izolovaneho simulovaneho labu** vytvorte vlastne
+testovacie autentizacne hodnoty. Netreba ich ziskavat od operatora ani zo starej
+VM. Kazdy clen timu moze mat vlastne hodnoty; rozhoduje ich zhoda medzi UE
+a zaznamom ucastnika v jeho vlastnej databaze.
+
+Tento prikaz vygeneruje dva riadky pre `.env`. Kazda hodnota ma 16 bajtov,
+teda 32 hexadecimalnych znakov:
+
+```bash
+python3 - <<'PY'
+import secrets
+print("UE_KEY=" + secrets.token_hex(16).upper())
+print("UE_OPC=" + secrets.token_hex(16).upper())
+PY
+```
+
+Skopirujte **oba vypisane riadky aj s nazvami premennych**. Otvorte:
+
+```bash
 nano .env
 ```
 
-V subore `.env` vyplnte `UE_KEY` a `UE_OPC`: kazda hodnota musi obsahovat
-32 hexadecimalnych znakov. Rovnake hodnoty pouzijete pri vytvarani ucastnika
-vo WebUI. Subor `.env` je vyluceny zo sledovania v Gite.
+Nahradte povodne riadky `UE_KEY=...` a `UE_OPC=...` skopirovanymi riadkami.
+V tomto postupe pouzite hodnoty bez uvodzoviek a medzier. Ulozte cez
+Ctrl+O, Enter a ukoncite editor cez Ctrl+X. Potom overte format bez vypisovania
+klucov:
+
+```bash
+if grep -Eq '^UE_KEY=[0-9A-Fa-f]{32}$' .env &&
+   grep -Eq '^UE_OPC=[0-9A-Fa-f]{32}$' .env; then
+  echo "OK: UE_KEY aj UE_OPC maju spravny format."
+else
+  echo "CHYBA: opravte oba riadky v .env pred dalsim krokom."
+fi
+git check-ignore .env
+```
+
+Ocakavany vystup je `OK: ...` a riadok `.env`. Kontrola formatu este
+neoveruje zhodu s databazou; ucastnika vytvorite v kroku 3.
+
+| Premenna v `.env` | V sablone UE | Pri vytvarani ucastnika vo WebUI |
+| --- | --- | --- |
+| `UE_KEY` | `key` | `K / Subscriber Key` |
+| `UE_OPC` | `op` pri `opType: OPC` | `OPc`, s vybranym typom `OPc` |
+
+Sablona `docker/ueransim/ue.yaml.template` uz pouziva typ `OPC`; pri spusteni
+sa hodnoty doplnia z `.env`. Rovnake hodnoty si ponechajte pre krok 3.
+Pri migracii existujuceho nativneho UE mozete prebrat jeho `key` a `op`,
+ak ma nastavene `opType: OPC`, a pouzit ich aj v novej databaze Compose.
+Pri existujucom funkcnom Compose labe pouzite jeho sucasny `.env`.
+Subor `.env` zostava vyluceny zo sledovania v Gite.
 
 Ak je na tejto VM uz nainstalovany nativny Open5GS, pred spustenim Compose
-zastavte jeho sluzby a jeho MongoDB:
+zastavte jeho sluzby a jeho MongoDB. Po restarte VM sa mozu opat spustit,
+preto tento krok pri navrate k Compose zopakujte:
 
 ```bash
 sudo systemctl stop 'open5gs-*.service' mongod.service
 ```
+
+Ak mate rucne spustene nativne gNB alebo UE, ukoncite ich v prislusnych
+terminaloch cez Ctrl+C. Pre novu VM bez nativneho labu tieto kroky odpadaju.
 
 ### 2. Zostavenie UERANSIM a spustenie jadra siete
 
@@ -201,7 +307,10 @@ V novej databaze skript `docker/open5gs/config/mongo-init.js` vytvori ucet
 WebUI `admin` s heslom `1423` pre izolovane vyukove prostredie.
 Inicializacia prebehne pri prvom spusteni MongoDB s prazdnym datovym adresarom.
 
-Pridajte ucastnika s nasledujucimi parametrami:
+Prihlaste sa a pridajte ucastnika s nasledujucimi parametrami. Hodnoty
+`UE_KEY` a `UE_OPC` uz mate z kroku 1 ulozene vo vlastnom `.env`. Vo WebUI
+vlozte iba ich 32-znakove hodnoty, bez casti `UE_KEY=` alebo `UE_OPC=`.
+Pre ich lokalne zobrazenie pouzite `nano .env` v dalsom terminali.
 
 | Pole | Hodnota |
 | --- | --- |
@@ -218,6 +327,9 @@ Pridajte ucastnika s nasledujucimi parametrami:
 Ulozte ucastnika. Jeho zaznam sa uchovava vo zvazku `mongo-data`; pri dalsich
 spusteniach ho netreba vytvarat znova. Pri zmene klucov v `.env` upravte aj
 kluce daneho ucastnika vo WebUI, aby sa hodnoty zhodovali.
+Pre jeden IMSI vytvorte iba jeden zaznam. Pri chybnom kluci moze UE najst
+gNB, ale autentifikacia sa neskonci uspesne; samotna dostupnost WebUI
+nepotvrdzuje prihlasenie UE.
 
 ### 4. Automaticke spustenie existujuceho labu
 
@@ -348,6 +460,12 @@ spravne pri zachovanych kontajneroch UE a UPF.
 
 ### Zastavenie a opatovne spustenie
 
+Po skonceni prace zastavte kontajnery z korena projektu:
+
+```bash
+sudo docker compose stop
+```
+
 Prikaz `sudo docker compose stop` zastavi kontajnery. Prikaz
 `sudo docker compose down` bez dalsich parametrov odstrani kontajnery a siet
 projektu, pricom zachova pomenovany zvazok `mongo-data` s uctom WebUI
@@ -357,6 +475,33 @@ jadro siete -> gNB s uspesnym NG Setup -> UE.
 Pri praci s existujucou databazou zachovajte zvazok `mongo-data`. Skript
 `mongo-init.js` pripravuje ucet WebUI; vytvorenie ucastnika v novej databaze
 je opisane v kroku 3.
+
+Po restarte VM spustite Docker, prejdite do svojej existujucej kopie projektu
+a pouzite overeny skript. Pri standardnom umiestneni z kroku 1:
+
+```bash
+cd ~/Open5GS_teamproject
+sudo systemctl start docker
+bash scripts/compose-up.sh
+```
+
+Ak mate nativne sluzby Open5GS, predtym ich zastavte podla kroku 1. Zachovajte
+`.env` aj `mongo-data`: kluce, ucet WebUI a ucastnika netreba vytvarat znova.
+Ak lokalny obraz este nie je zostaveny, vratte sa ku kroku 2.
+
+### Kedy povazovat zopakovanie za uspesne
+
+- `compose-up.sh` sa skonci hlasenim `HOTOVO` a oba testy ping maju 0% strat.
+- UE je zaregistrovany, ma aktivnu relaciu PDU a IPv4 na `uesimtun0`.
+- `measure-compose.py` dokonci vsetkych 12 testov. V novom `summary.json`
+  su `status: "complete"`, `completed_runs: 12` a `planned_runs: 12`.
+- Pri porovnani pouzite rovnaku verziu iperf3 a rovnake parametre testu.
+  Presny bitrate, RTT, jitter a dynamicka adresa UE sa mozu medzi pocitacmi lisit.
+
+Meraci skript vypise konkretny novy adresar `results/iperf-*`. Z **tohto
+adresara** poslite timu `summary.json` a `report.md`; nezamienajte ich
+so subormi starej alebo neuspesnej serie. Navod je pripraveny na overenie
+na dalsom pocitaci, ale takyto druhy nezavisly beh este nie je potvrdeny.
 
 ### Zaznamenane vysledky
 
