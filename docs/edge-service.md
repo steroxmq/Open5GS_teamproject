@@ -102,10 +102,13 @@ pri pomalej odpovedi sa planovany interval nemusi dodrzat. Skutocne casy
 su v CSV. HTTP zacina 3 s po spusteni ulohy iperf3; samotne cakanie nie
 je dokaz prekryvu.
 
-Po dokonceni sa overi vystup klienta aj servera iperf3 a nenulovy prenos
-v kazdom intervale klienta. Cely HTTP pokus musi lezat v datovom okne
-urcenom timestampom startu a koncom intervalov, so sekundovym odstupom
-od oboch hranic pre celosekundove rozlisenie timestampu. Neskory start,
+Po dokonceni sa overi vystup klienta aj servera iperf3, suvislost intervalov
+a nenulovy prenos v kazdom intervale klienta. Skript uklada monotonne
+casy tesne pred spustenim klienta P0 a po jeho ukonceni P1. Ak suvisla
+datova faza trvala D sekund vnutri tohto intervalu, jej zaciatok je najneskor
+P1-D a jej koniec najskor P0+D. Cely HTTP pokus musi lezat v garantovanom
+okne [P1-D+0.1, P0+D-0.1]. Prazdne okno sa odmietne. Timestamp startu
+iperf3 pred riadiacou vymenou sa na dokaz prekryvu nepouziva. Neskory start,
 timeout alebo nepreukazany prekryv sposobi stav failed. Ide o dokaz prekryvu
 s intervalmi prenosu, nie dokaz obsadenia linky v kazdej mikrosekunde.
 Kazda odpoved sa overuje rovnako ako v pilote vratane request_id a zdroja.
@@ -119,11 +122,22 @@ nezahrna spustenie procesu nsenter. Nie je to ciste sietove RTT.
 Ponuknuta zataz a dosiahnuta priepustnost prijimaca su oddelene.
 
 Subory resources obsahuju vzorky suroveho CPU /proc/stat, RAM /proc/meminfo
-a load average hostitela pred seriou a po poziadavkach. Nejde o metriku
-samostatneho kontajnera; CPU vytazenie vyzaduje rozdiel pocitadiel vzoriek.
-Verzia Pythonu, jadra, iperf3, hash binarky a identity kontajnerov su v suhrne.
+a load average hostitela pred seriou a po poziadavkach. Suhrn kazdeho
+opakovania obsahuje CPU busy z rozdielu pocitadiel (bez idle a iowait,
+vratane steal, bez dvojiteho zapocitania guest), minimum MemAvailable
+a maximum pouziteho swapu zo vzoriek. Nejde o metriku samostatneho
+kontajnera ani o nepretrzite meranie pamate. Verzie Pythonu, jadra,
+Docker/Compose, nsenter, ip, iperf3, hash binarky a identity kontajnerov
+su v suhrne. `by_condition` agreguje HTTP podla idle/UL/DL; `groups`
+uchovava aj jednotlive opakovania a ich stav. Pri chybe zataze sa zachovaju
+uz ziskane HTTP udaje. SIGINT a SIGTERM nastavia failed a vyvolaju obnovu
+docasnej trasy; beziaca uloha iperf3 moze pred ukoncenim dobehnut do limitu.
+SIGKILL a vypadok VM neumoznuju garantovat obnovu trasy ani zapis suhrnu.
 
 V relacii implementacie bol pristup k Docker socketu zamietnuty aj mimo
 sandboxu a `sudo -n` hlasilo `sudo: a password is required`. Nova seria
 preto zatial nebola overena na aktivnom Compose labe. Historicky uspech
 pilota tento limit nenahradza. Existujuce data MongoDB sa nemenili.
+
+Aktualnu kontrolu pristupu a lokalneho overenia opisuje
+[zaznam z 27.10.2026](measurements/http-2026-10-27.md).

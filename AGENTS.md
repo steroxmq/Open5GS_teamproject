@@ -12,3 +12,5 @@
 - `compose-up.sh` obnovuje gNB a UE. Nevolat ho pocas merania.
 - Opravnenia sandboxu a sudo odlisovat od poruchy siete. Historicke vysledky neoznacovat za nove.
 - Pracovat v pracovnej vetve, po overeni vytvorit lokalny kontrolny commit; bez push a merge.
+- Prekryv HTTP s TCP dokazovat suvislymi nenulovymi intervalmi a monotonnym casovanim klienta; samotne cakanie ani zivy proces nestacia.
+- Lokalny HTTP test na loopbacku so simulovanymi zavislostami nie je dokazom noveho prenosu cez UE TUN.

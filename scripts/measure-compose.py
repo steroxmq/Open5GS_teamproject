@@ -265,8 +265,14 @@ def trial(ue, upf, ue_ip, folder, protocol, direction, run, args):
                 time.sleep(0.2)
             else:
                 raise LabError("Server iperf3 nezacal pocuvat do 5 sekund.")
-            command(namespace(ue["pid"], *client_args), timeout=args.duration + 10,
-                    output=paths["client.json"], errors=paths["client.stderr"])
+            timing = dict(monotonic_start=time.monotonic(), epoch_start=time.time())
+            timing_path = folder / f"{label}-client-timing.json"
+            try:
+                command(namespace(ue["pid"], *client_args), timeout=args.duration + 10,
+                        output=paths["client.json"], errors=paths["client.stderr"])
+            finally:
+                timing.update(monotonic_end=time.monotonic(), epoch_end=time.time())
+                timing_path.write_text(json.dumps(timing, indent=2) + "\n")
             try:
                 server.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -282,7 +288,8 @@ def trial(ue, upf, ue_ip, folder, protocol, direction, run, args):
         raise LabError("Neplatny vystup JSON iperf3: " + str(exc))
     row = metrics(client_json, server_json, protocol, direction, args.duration)
     row.update(run=run, requested_rate=rate, requested_seconds=args.duration,
-               client_json=paths["client.json"].name, server_json=paths["server.json"].name)
+               client_json=paths["client.json"].name, server_json=paths["server.json"].name,
+               client_timing_json=timing_path.name)
     return row
 
 
