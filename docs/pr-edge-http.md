@@ -23,19 +23,30 @@ sa ukladaju do noveho results adresara. Start a meranie zdielaju zamok.
 
 ## Overene vysledky
 
-Seria z terminalu VM 27.10.2026 o 23:00: 9/9 skupin, 180/180 spravnych
-HTTP odpovedi; vsetkych 120 pokusov pri zatazi v potvrdenom datovom okne.
+Seria z terminalu VM 27.10.2026 o 23:30 po opravach (`41d747a`):
+9/9 skupin, 180/180 spravnych HTTP odpovedi; vsetkych 120 pokusov
+pri zatazi v potvrdenom datovom okne.
 Mediany a p95 boli nezavisle prepocitane zo surovin.
 
 | Podmienka | Median HTTP (ms) | p95 HTTP (ms) | Median TCP prijimaca (Mbit/s) |
 | --- | --- | --- | --- |
-| Bez riadenej zataze | 3.0275 | 5.637 | - |
-| TCP UL | 4.0600 | 9.235 | 49.996 |
-| TCP DL | 3.5825 | 11.044 | 49.998 |
+| Bez riadenej zataze | 3.0490 | 4.674 | - |
+| TCP UL | 3.2335 | 6.597 | 49.990 |
+| TCP DL | 3.6185 | 7.085 | 50.002 |
 
 p95 pouziva nearest rank ceil(0.95*n), iba uspesne odpovede. Uspesnost
-zahrna vsetky pokusy. Tato UE seria predchadza opravenej obsluhe
-prerusenia; nejde o nove meranie po poslednych opravach.
+zahrna vsetky pokusy. Novy pilot ma HTTP 201 cez UE 10.45.0.7, spravny
+NAT zdroj UPF a obsah odpovede, 3.113 ms a temporary_route_removed=true.
+Hash oboch vstupnych HTTP skriptov v suhrnoch sa zhoduje s `41d747a`.
+Seria je complete bez cleanup_error. Pri naslednej pasivnej kontrole
+chyba docasna /32 trasa UE, listener UPF:5202 aj vsetky procesy iperf3.
+Starsia seria z 23:00 a loopback nie su do tychto cisiel zahrnute.
+
+Zdroje: `results/edge-20261027-233033-nb67lqwg/`,
+`results/http-20261027-233034-aapeox7c/`; audit a priame doklady ocisty
+su v `results/http-audit-20261027-233359-36orwax1/`.
+Riadne ukoncenie novej UE serie overuje opravenu verziu pri uspechu;
+SIGTERM a chyby ocisty boli overene lokalnymi regresnymi testami.
 
 ## Validacia
 
@@ -58,8 +69,10 @@ nepreukazuju statisticku vyznamnost ani samostatny vplyv siete.
 SIGKILL alebo vypadok VM nemoze garantovat obnovu. Zdrojova IP nie je
 autentifikacia. Surove vysledky su lokalne ignorovane artefakty, cerstvy
 klon obsahuje postup a skripty na vlastne meranie. Plny start na novej
-VM a nove UE meranie po poslednych opravach neboli vykonane pre chybajuce
-opravnenia Docker/sudo v relacii agenta. MongoDB, ucastnik a .env sa nemenia.
+cistej VM este nebol overeny. Nove UE meranie opravenej verzie spustil
+pouzivatel na existujucom labe; agent vykonal audit a pasivne kontroly,
+nie nove spustenie labu. Pomocne moduly a server nie su v suhrne
+samostatne runtime hashovane. MongoDB, ucastnik a .env sa nemenia.
 
 Podrobnosti: [HTTP navod](edge-service.md),
 [meraci zaznam](measurements/http-2026-10-27.md),
