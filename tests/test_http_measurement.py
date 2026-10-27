@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import signal
 from pathlib import Path
 import tempfile
 import time
@@ -64,6 +65,18 @@ class MeasurementTests(unittest.TestCase):
                 m.overlap([dict(monotonic_start=103, monotonic_end=110)], data,
                           dict(monotonic_start=100, monotonic_end=end))
 
+    def test_nonfinite_byte_counts_and_small_gaps_reject_overlap(self):
+        for count in (float('nan'), float('inf'), True, None):
+            with self.subTest(count=count), self.assertRaises(m.edge.LabError):
+                m.overlap([dict(monotonic_start=103, monotonic_end=110)],
+                          dict(intervals=[dict(sum=dict(start=0, end=16, bytes=count))]),
+                          dict(monotonic_start=100, monotonic_end=117))
+        with self.assertRaises(m.edge.LabError):
+            m.overlap([dict(monotonic_start=103, monotonic_end=110)],
+                      dict(intervals=[dict(sum=dict(start=0, end=4, bytes=1)),
+                                      dict(sum=dict(start=4.009, end=16, bytes=1))]),
+                      dict(monotonic_start=100, monotonic_end=117))
+
 
 class SeriesLifecycleTests(unittest.TestCase):
     """Simulovane zavislosti; tieto testy nie su dokazom prenosu cez TUN."""
@@ -81,10 +94,18 @@ class SeriesLifecycleTests(unittest.TestCase):
             if 'addr' in args:
                 return json.dumps([dict(addr_info=[dict(family='inet', local='10.45.0.9')])])
             if 'route' in args:
+                if 'show' in args and failure == 'existing-route':
+                    return json.dumps([dict(dev='uesimtun0', prefsrc='10.45.0.9')])
+                if 'add' in args and failure == 'route-add':
+                    raise m.edge.LabError('Simulovane odmietnutie trasy.')
+                if 'del' in args and failure == 'cleanup':
+                    raise m.edge.LabError('Simulovana chyba obnovy trasy.')
                 return json.dumps([dict(dev='uesimtun0')]) if 'get' in args else '[]'
             data = json.loads(stdin)
             if failure == 'interrupt':
                 raise KeyboardInterrupt()
+            if failure == 'term':
+                os.kill(os.getpid(), signal.SIGTERM)
             if failure == 'http':
                 raise m.edge.LabError('Simulovana chyba HTTP.')
             return json.dumps(dict(http_status=201, elapsed_ms=2,
@@ -143,7 +164,7 @@ class SeriesLifecycleTests(unittest.TestCase):
         summary = json.loads((folder / 'summary.json').read_text())
         self.assertTrue((folder / 'report.md').is_file())
         self.assertTrue((folder / 'requests.csv').is_file())
-        self.assertTrue(any('del' in args for args in calls))
+        self.assertEqual(any('del' in args for args in calls), failure not in ('existing-route', 'route-add'))
         return code, summary, folder
 
     def test_success_exports_all_conditions_and_overlap(self):
@@ -157,7 +178,7 @@ class SeriesLifecycleTests(unittest.TestCase):
             self.assertIn('True', (folder / 'requests.csv').read_text())
 
     def test_http_failure_load_failure_and_interrupt_preserve_partial_results(self):
-        for failure in ('http', 'load', 'interrupt'):
+        for failure in ('http', 'load', 'interrupt', 'term'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 code, summary, folder = self.run_series(directory, failure)
                 self.assertEqual(code, 1)
@@ -165,3 +186,19 @@ class SeriesLifecycleTests(unittest.TestCase):
                 self.assertGreater(summary['http']['requests'], 0)
                 self.assertEqual(summary['groups'][-1]['status'], 'failed')
                 self.assertTrue((folder / 'requests.jsonl').read_text().strip())
+
+    def test_existing_route_is_preserved_and_failed_add_is_not_deleted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(self.run_series(directory, 'existing-route')[0], 0)
+        with tempfile.TemporaryDirectory() as directory:
+            code, summary, folder = self.run_series(directory, 'route-add')
+            self.assertEqual(code, 1)
+            self.assertEqual(summary['status'], 'failed')
+            self.assertEqual(summary['http']['requests'], 0)
+
+    def test_cleanup_failure_cannot_be_complete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, summary, folder = self.run_series(directory, 'cleanup')
+            self.assertEqual(code, 1)
+            self.assertEqual(summary['status'], 'failed')
+            self.assertIn('cleanup_error', summary)

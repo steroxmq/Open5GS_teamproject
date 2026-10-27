@@ -123,6 +123,11 @@ class EvidenceValidationTests(unittest.TestCase):
     def test_valid_receipt(self):
         check.validate_response(self.good, self.reading, "10.45.0.3")
 
+    def test_invalid_duration_is_rejected(self):
+        for elapsed in (None, True, -1, float('nan'), float('inf'), '3.4'):
+            with self.subTest(elapsed=elapsed), self.assertRaises(check.LabError):
+                check.validate_response(dict(self.good, elapsed_ms=elapsed), self.reading, "10.45.0.3")
+
     def test_replayed_receipt_is_rejected(self):
         self.good["response"]["request_id"] = "old-request"
         with self.assertRaises(check.LabError):

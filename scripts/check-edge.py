@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -27,13 +28,21 @@ class LabError(Exception):
     pass
 
 
+class CommandTimeout(LabError):
+    pass
+
+
+def interrupted(signum, frame):
+    raise KeyboardInterrupt("Test bol preruseny signalom " + str(signum) + ".")
+
+
 def command(argv, timeout=15, stdin=None, pass_fds=()):
     try:
         proc = subprocess.run(list(map(str, argv)), input=stdin, capture_output=True,
                               text=True, timeout=timeout, pass_fds=pass_fds,
                               env=dict(os.environ, LC_ALL="C"))
     except subprocess.TimeoutExpired as exc:
-        raise LabError("Casovy limit prikazu: " + str(argv[0])) from exc
+        raise CommandTimeout("Casovy limit prikazu: " + str(argv[0])) from exc
     if proc.returncode:
         raise LabError("Prikaz zlyhal: " + (proc.stderr or proc.stdout).strip()[-700:])
     return proc.stdout.strip()
@@ -96,6 +105,9 @@ def validate_response(result, reading, ue_ip):
     if not isinstance(result, dict) or not isinstance(result.get("response"), dict):
         raise LabError("HTTP odpoved nema ocakavanu strukturu JSON.")
     body = result["response"]
+    elapsed = result.get("elapsed_ms")
+    if isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed) or elapsed < 0:
+        raise LabError("Neplatne trvanie HTTP poziadavku.")
     if result.get("http_status") != 201 or body.get("status") != "accepted":
         raise LabError("Edge sluzba neprijala udaj: " + json.dumps(result))
     if result.get("client_source_ip") != ue_ip or body.get("observed_source_ip") != UPF_IP:
@@ -163,6 +175,7 @@ def main():
     fd = None
     route_created = False
     exit_code = 1
+    old_term = signal.signal(signal.SIGTERM, interrupted)
     print("Overenie edge sluzby. Vysledky: " + str(folder), flush=True)
     try:
         for service in ("ue", "upf", "edge"):
@@ -185,7 +198,14 @@ def main():
         else:
             # Set before calling ip so cleanup is attempted even after a CLI timeout.
             route_created = True
-            in_ue(fd, "ip", "-4", "route", "add", TARGET, "dev", "uesimtun0", "src", ue_ip)
+            try:
+                in_ue(fd, "ip", "-4", "route", "add", TARGET, "dev", "uesimtun0", "src", ue_ip)
+            except CommandTimeout:
+                raise
+            except (LabError, OSError):
+                # Odmietnute add nic nevytvorilo; neodstranit cudziu trasu.
+                route_created = False
+                raise
         route = json.loads(in_ue(fd, "ip", "-j", "-4", "route", "get", EDGE_IP, "from", ue_ip))
         (folder / "ue-route-used.json").write_text(json.dumps(route, indent=2) + "\n")
         if len(route) != 1 or route[0].get("dev") != "uesimtun0":
@@ -204,12 +224,16 @@ def main():
         summary["status"] = "complete"
         exit_code = 0
     except (LabError, OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as exc:
+        summary["status"] = "failed"
         summary["error"] = str(exc)
         print("CHYBA: " + str(exc), file=sys.stderr)
     except KeyboardInterrupt:
+        summary["status"] = "failed"
         summary["error"] = "Test bol preruseny."
         exit_code = 130
     finally:
+        old_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         if route_created and fd is not None:
             try:
                 in_ue(fd, "ip", "-4", "route", "del", TARGET, "dev", "uesimtun0", "src", summary["ue_ip"])
@@ -231,6 +255,8 @@ def main():
                 os.chown(item, *owner)
             os.chown(folder, *owner)
         lock.close()
+        signal.signal(signal.SIGINT, old_int)
+        signal.signal(signal.SIGTERM, old_term)
         print("Vysledky: " + str(folder), flush=True)
     if exit_code == 0:
         print("HOTOVO: HTTP 201, spravny udaj senzora a potvrdeny zdroj UPF.")

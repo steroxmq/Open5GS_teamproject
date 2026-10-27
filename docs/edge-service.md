@@ -9,6 +9,16 @@ Zakladny `compose.yaml`, ucastnik a existujuce meranie iperf3 zostavaju rovnake.
 - Funkcny lab podla hlavneho README, Docker Compose a Python 3 v Ubuntu VM.
 - Prikazy vykonavajte v koreni svojej kopie projektu ako pri predoslom merani.
 - Adresa `172.18.0.30` v sieti `core` musi byt volna pre sluzbu `edge`.
+- Na hostitelovi musia byt `python3`, `nsenter`, `ip`, `ss`, `timeout`
+  a `flock` (Ubuntu: python3, util-linux, iproute2, coreutils).
+- Pre seriove meranie pripravte izolovany iperf3 3.21 podla README:
+  `bash scripts/setup-lab-iperf3.sh` ako bezny pouzivatel. Existujucu
+  overenu binarku netreba znovu kompilovat; priprava pouziva make -j1.
+
+Vsetky potrebne skripty, Compose subory a server su sledovane v Gite.
+Pouzivatelsky `docs/codex-handoff.md` ani lokalne `results/` nie su
+predpokladom spustenia. Surove vysledky opisane v dokumentacii zostavaju
+lokalnymi artefaktmi; cerstvy klon ich neobsahuje.
 
 Najprv obnovte overeny lab a overte jeho spojenie:
 
@@ -23,7 +33,8 @@ jeho logy; pridanie HTTP aplikacie neopravi nefunkcne pripojenie UE.
 
 ```bash
 sudo docker compose -f compose.yaml -f compose.edge.yaml config -q
-sudo docker compose -f compose.yaml -f compose.edge.yaml up -d --no-deps edge
+mkdir -p results
+flock -n results/.compose-up.lock sudo docker compose -f compose.yaml -f compose.edge.yaml up -d --no-deps --no-build edge
 sudo docker compose -f compose.yaml -f compose.edge.yaml ps edge
 ```
 
@@ -34,6 +45,9 @@ nevyzaduje kompilaciu ani dalsie Python baliky. Pockajte, kym ma `edge` stav
 ```bash
 sudo python3 scripts/check-edge.py
 ```
+
+Ak flock vrati nenulovy kod pre obsadeny zamok, pockajte na ukoncenie
+startu alebo merania. Pocas merania sluzby nespustajte ani nezastavujte.
 
 Ocakavany vysledok je HTTP `201`, teplota `23.5` C prevedena na `296.65` K
 a hlasenie `HOTOVO`. Pre inu hodnotu pouzite napr.:
@@ -131,13 +145,21 @@ Docker/Compose, nsenter, ip, iperf3, hash binarky a identity kontajnerov
 su v suhrne. `by_condition` agreguje HTTP podla idle/UL/DL; `groups`
 uchovava aj jednotlive opakovania a ich stav. Pri chybe zataze sa zachovaju
 uz ziskane HTTP udaje. SIGINT a SIGTERM nastavia failed a vyvolaju obnovu
-docasnej trasy; beziaca uloha iperf3 moze pred ukoncenim dobehnut do limitu.
+docasnej trasy. Pri odchode zo skupiny skript zrusi vlastnu zataz,
+ukonci procesove skupiny klienta aj servera iperf3 a pocka na ich ukoncenie.
+Aj samostatny pilot spracuje SIGTERM a zapise neuspech s obnovou trasy.
+Existujuca trasa sa neodstranuje; odmietnute pridanie novej trasy nevyvola
+mazanie. Pri timeoute pridania zostava vysledok neistoty v stave failed
+a skript sa pokusi trasu odstranit. Dalsie SIGINT/SIGTERM su pocas obnovy
+ignorovane, aby sa obnova neprerusila druhym signalom.
 SIGKILL a vypadok VM neumoznuju garantovat obnovu trasy ani zapis suhrnu.
 
-V relacii implementacie bol pristup k Docker socketu zamietnuty aj mimo
-sandboxu a `sudo -n` hlasilo `sudo: a password is required`. Nova seria
-preto zatial nebola overena na aktivnom Compose labe. Historicky uspech
-pilota tento limit nenahradza. Existujuce data MongoDB sa nemenili.
+Nova seria z terminalu VM z 27.10.2026 bola overena zo surovych dat:
+180/180 spravnych odpovedi, vsetkych 120 pokusov pri zatazi v potvrdenom
+datovom okne TCP. Median/p95 HTTP v ms: idle 3.0275/5.637,
+UL 4.0600/9.235, DL 3.5825/11.044. Median prijimaca TCP bol priblizne
+49.996 Mbit/s UL a 49.998 Mbit/s DL. Tieto vysledky patria verzii
+pred naslednymi opravami obsluhy prerusenia; nie su novym testom oprav.
 
-Aktualnu kontrolu pristupu a lokalneho overenia opisuje
+Metodu, opakovania, audit, starsie kontroly pristupu a obmedzenia opisuje
 [zaznam z 27.10.2026](measurements/http-2026-10-27.md).

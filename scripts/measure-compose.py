@@ -50,12 +50,31 @@ def stop_process(proc):
         proc.wait(timeout=2)
 
 
-def command(argv, timeout=15, output=None, errors=None):
+def wait_process(proc, timeout, cancel_event=None):
+    if cancel_event is None:
+        return proc.wait(timeout=timeout)
+    deadline = time.monotonic() + timeout
+    while proc.poll() is None:
+        if cancel_event.is_set():
+            raise LabError("Zataz bola zrusena.")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+        try:
+            proc.wait(timeout=min(.1, remaining))
+        except subprocess.TimeoutExpired:
+            pass
+    return proc.returncode
+
+
+def command(argv, timeout=15, output=None, errors=None, cancel_event=None):
+    if cancel_event is not None and cancel_event.is_set():
+        raise LabError("Zataz bola zrusena.")
     with open(output, "w") if output else tempfile.TemporaryFile(mode="w+") as out:
         with open(errors, "w") if errors else tempfile.TemporaryFile(mode="w+") as err:
             proc = subprocess.Popen(argv, stdout=out, stderr=err, env=ENV, start_new_session=True)
             try:
-                proc.wait(timeout=timeout)
+                wait_process(proc, timeout, cancel_event)
             except subprocess.TimeoutExpired:
                 stop_process(proc)
                 raise LabError(f"Casovy limit ({timeout} s): " + shlex.join(list(map(str, argv))))
@@ -237,10 +256,11 @@ def write_results(folder, metadata, rows, error):
 
 
 def trial(ue, upf, ue_ip, folder, protocol, direction, run, args):
+    cancel_event = getattr(args, 'cancel_event', None)
     label = f"{protocol.lower()}-{direction.lower()}-{run:02d}"
     paths = {name: folder / f"{label}-{name}" for name in
              ["client.json", "client.stderr", "server.json", "server.stderr"]}
-    if command(namespace(upf["pid"], "ss", "-H", "-ltn", f"sport = :{PORT}")):
+    if command(namespace(upf["pid"], "ss", "-H", "-ltn", f"sport = :{PORT}"), cancel_event=cancel_event):
         raise LabError(f"Port {PORT} v UPF je obsadeny. Pozrite existujuci proces iperf3 v tomto namespace.")
     rate = args.tcp_rate if protocol == "TCP" else args.udp_rate
     client_args = [IPERF3, "-4", "-c", SERVER_IP, "-p", str(PORT), "-B", ue_ip,
@@ -260,7 +280,7 @@ def trial(ue, upf, ue_ip, folder, protocol, direction, run, args):
             while time.monotonic() < deadline:
                 if server.poll() is not None:
                     raise LabError("Server iperf3 sa ukoncil: " + paths["server.stderr"].read_text()[-400:])
-                if command(namespace(upf["pid"], "ss", "-H", "-ltn", f"sport = :{PORT}")):
+                if command(namespace(upf["pid"], "ss", "-H", "-ltn", f"sport = :{PORT}"), cancel_event=cancel_event):
                     break
                 time.sleep(0.2)
             else:
@@ -269,12 +289,12 @@ def trial(ue, upf, ue_ip, folder, protocol, direction, run, args):
             timing_path = folder / f"{label}-client-timing.json"
             try:
                 command(namespace(ue["pid"], *client_args), timeout=args.duration + 10,
-                        output=paths["client.json"], errors=paths["client.stderr"])
+                        output=paths["client.json"], errors=paths["client.stderr"], cancel_event=cancel_event)
             finally:
                 timing.update(monotonic_end=time.monotonic(), epoch_end=time.time())
                 timing_path.write_text(json.dumps(timing, indent=2) + "\n")
             try:
-                server.wait(timeout=5)
+                wait_process(server, 5, cancel_event)
             except subprocess.TimeoutExpired:
                 raise LabError("Server iperf3 sa po merani neukoncil.")
             if server.returncode:

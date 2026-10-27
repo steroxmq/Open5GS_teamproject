@@ -15,6 +15,7 @@ import signal
 import statistics
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
@@ -73,12 +74,15 @@ def overlap(rows, client, timing):
     # zaciatok <= P1-D a koniec >= P0+D. Pouzivame spolocne monotonne hodiny,
     # nie timestamp vytvoreny pred riadiacou vymenou iperf3.
     intervals = [i['sum'] for i in client['intervals']]
-    if not rows or not intervals or any(i.get('bytes', 0) <= 0 or i.get('omitted', False) for i in intervals):
+    if not rows or not intervals or any(isinstance(i.get('bytes'), bool) or
+            not isinstance(i.get('bytes'), (int, float)) or not math.isfinite(i['bytes']) or
+            i['bytes'] <= 0 or i.get('omitted', False) for i in intervals):
         raise edge.LabError('Chybaju intervaly so skutocnym prenosom TCP.')
     previous = 0
     for interval in intervals:
         begin, end = interval['start'], interval['end']
-        if not all(math.isfinite(v) for v in (begin, end)) or begin < 0 or end <= begin or abs(begin - previous) > .01:
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+                   for v in (begin, end)) or begin < 0 or end <= begin or abs(begin - previous) > 1e-6:
             raise edge.LabError('Datove intervaly TCP nie su suvisle.')
         previous = end
     duration = previous - intervals[0]['start']
@@ -157,7 +161,13 @@ def main():
                 raise edge.LabError('Existujuca trasa sa nesmie prepisat.')
         else:
             created = True
-            edge.in_ue(fd, 'ip', 'route', 'add', edge.TARGET, 'dev', 'uesimtun0', 'src', ue_ip)
+            try:
+                edge.in_ue(fd, 'ip', 'route', 'add', edge.TARGET, 'dev', 'uesimtun0', 'src', ue_ip)
+            except edge.CommandTimeout:
+                raise
+            except (edge.LabError, OSError):
+                created = False
+                raise
         route = json.loads(edge.in_ue(fd, 'ip', '-j', '-4', 'route', 'get', edge.EDGE_IP, 'from', ue_ip))
         (folder / 'route-used.json').write_text(json.dumps(route, indent=2) + '\n')
         if len(route) != 1 or route[0].get('dev') != 'uesimtun0':
@@ -169,65 +179,69 @@ def main():
                 group = dict(group=direction, repetition=repetition, status='failed',
                              offered_mbps=0 if direction == 'idle' else 50)
                 summary['groups'].append(group)
+                cancel_event = threading.Event()
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = None
-                    if direction != 'idle':
-                        opts = argparse.Namespace(tcp_rate='50M', duration=args.duration)
-                        future = pool.submit(iperf.trial, containers['ue'], containers['upf'], ue_ip,
-                                             folder, 'TCP', direction, repetition, opts)
-                        time.sleep(3)
-                    schedule = time.monotonic()
-                    samples = [resources()]
-                    resource_path = folder / (label + '-resources.json')
-                    resource_path.write_text(json.dumps(samples, indent=2))
-                    for index in range(args.requests):
-                        if future and future.done():
-                            future.result()
-                            raise edge.LabError('TCP zataz sa skoncila pred HTTP seriou.')
-                        time.sleep(max(0, schedule + index * args.interval - time.monotonic()))
-                        reading = dict(sensor_id='ue-sensor-1', request_id=uuid.uuid4().hex, temperature_c=23.5)
-                        row = dict(group=direction, repetition=repetition, index=index, success=False,
-                                   epoch_start=time.time(), monotonic_start=time.monotonic(),
-                                   elapsed_ms=None, error=None)
-                        record = dict(reading=reading)
-                        interruption = None
-                        try:
-                            raw = edge.in_ue(fd, sys.executable, str(Path(edge.__file__)), '--http-worker',
-                                             stdin=json.dumps(dict(ue_ip=ue_ip, reading=reading)))
-                            record['http'] = json.loads(raw)
-                            row['elapsed_ms'] = record['http']['elapsed_ms']
-                            edge.validate_response(record['http'], reading, ue_ip)
-                            row['success'] = True
-                        except (Exception, KeyboardInterrupt) as exc:
-                            row['error'] = str(exc) or 'HTTP pokus bol preruseny.'
-                            if isinstance(exc, KeyboardInterrupt):
-                                interruption = exc
-                        row['epoch_end'] = time.time()
-                        row['monotonic_end'] = time.monotonic()
-                        group_rows.append(row)
-                        rows.append(row)
-                        with (folder / 'requests.jsonl').open('a') as out:
-                            out.write(json.dumps(record | row) + '\n')
-                        samples.append(resources())
+                    try:
+                        future = None
+                        if direction != 'idle':
+                            opts = argparse.Namespace(tcp_rate='50M', duration=args.duration, cancel_event=cancel_event)
+                            future = pool.submit(iperf.trial, containers['ue'], containers['upf'], ue_ip,
+                                                 folder, 'TCP', direction, repetition, opts)
+                            time.sleep(3)
+                        schedule = time.monotonic()
+                        samples = [resources()]
+                        resource_path = folder / (label + '-resources.json')
                         resource_path.write_text(json.dumps(samples, indent=2))
-                        group.update(stats(group_rows))
-                        group['resources'] = resource_summary(samples)
-                        if interruption is not None:
-                            raise interruption
-                    if any(abs((r['epoch_end'] - r['epoch_start']) -
-                               (r['monotonic_end'] - r['monotonic_start'])) > .1 for r in group_rows):
-                        raise edge.LabError('Hodiny sa pocas HTTP poziadavku zmenili.')
-                    offsets = [r['epoch_start'] - r['monotonic_start'] for r in group_rows]
-                    if max(offsets) - min(offsets) > .1:
-                        raise edge.LabError('Hodiny sa pocas HTTP serie zmenili.')
-                    if future:
-                        group['load'] = future.result()
-                        client = json.loads((folder / group['load']['client_json']).read_text())
-                        timing = json.loads((folder / group['load']['client_timing_json']).read_text())
-                        group['overlap'] = overlap(group_rows, client, timing)
+                        for index in range(args.requests):
+                            if future and future.done():
+                                future.result()
+                                raise edge.LabError('TCP zataz sa skoncila pred HTTP seriou.')
+                            time.sleep(max(0, schedule + index * args.interval - time.monotonic()))
+                            reading = dict(sensor_id='ue-sensor-1', request_id=uuid.uuid4().hex, temperature_c=23.5)
+                            row = dict(group=direction, repetition=repetition, index=index, success=False,
+                                       epoch_start=time.time(), monotonic_start=time.monotonic(),
+                                       elapsed_ms=None, error=None)
+                            record = dict(reading=reading)
+                            interruption = None
+                            try:
+                                raw = edge.in_ue(fd, sys.executable, str(Path(edge.__file__)), '--http-worker',
+                                                 stdin=json.dumps(dict(ue_ip=ue_ip, reading=reading)))
+                                record['http'] = json.loads(raw)
+                                row['elapsed_ms'] = record['http']['elapsed_ms']
+                                edge.validate_response(record['http'], reading, ue_ip)
+                                row['success'] = True
+                            except (Exception, KeyboardInterrupt) as exc:
+                                row['error'] = str(exc) or 'HTTP pokus bol preruseny.'
+                                if isinstance(exc, KeyboardInterrupt):
+                                    interruption = exc
+                            row['epoch_end'] = time.time()
+                            row['monotonic_end'] = time.monotonic()
+                            group_rows.append(row)
+                            rows.append(row)
+                            with (folder / 'requests.jsonl').open('a') as out:
+                                out.write(json.dumps(record | row) + '\n')
+                            samples.append(resources())
+                            resource_path.write_text(json.dumps(samples, indent=2))
+                            group.update(stats(group_rows))
+                            group['resources'] = resource_summary(samples)
+                            if interruption is not None:
+                                raise interruption
+                        if any(abs((r['epoch_end'] - r['epoch_start']) -
+                                   (r['monotonic_end'] - r['monotonic_start'])) > .1 for r in group_rows):
+                            raise edge.LabError('Hodiny sa pocas HTTP poziadavku zmenili.')
+                        offsets = [r['epoch_start'] - r['monotonic_start'] for r in group_rows]
+                        if max(offsets) - min(offsets) > .1:
+                            raise edge.LabError('Hodiny sa pocas HTTP serie zmenili.')
+                        if future:
+                            group['load'] = future.result()
+                            client = json.loads((folder / group['load']['client_json']).read_text())
+                            timing = json.loads((folder / group['load']['client_timing_json']).read_text())
+                            group['overlap'] = overlap(group_rows, client, timing)
 
-                    if not all(r['success'] for r in group_rows):
-                        raise edge.LabError('Nie vsetky HTTP odpovede su platne.')
+                        if not all(r['success'] for r in group_rows):
+                            raise edge.LabError('Nie vsetky HTTP odpovede su platne.')
+                    finally:
+                        cancel_event.set()
                 for service, original in containers.items():
                     current = edge.container(service)
                     if any(current[k] != original[k] for k in ('id', 'pid', 'started_at')):
@@ -235,8 +249,10 @@ def main():
                 group['status'] = 'complete'
         summary['status'] = 'complete'
     except (Exception, KeyboardInterrupt) as exc:
-        summary['error'] = str(exc) or 'Meranie bolo prerusene.'
+        summary.update(status='failed', error=str(exc) or 'Meranie bolo prerusene.')
     finally:
+        old_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         if created and fd is not None:
             try:
                 edge.in_ue(fd, 'ip', 'route', 'del', edge.TARGET, 'dev', 'uesimtun0', 'src', summary['ue_ip'])
@@ -259,6 +275,7 @@ def main():
             for item in [folder, *folder.iterdir()]:
                 os.chown(item, int(os.environ['SUDO_UID']), int(os.environ['SUDO_GID']))
         lock.close()
+        signal.signal(signal.SIGINT, old_int)
         signal.signal(signal.SIGTERM, old_term)
     print('HOTOVO.' if summary['status'] == 'complete' else
           'CHYBA: ' + summary.get('error', summary.get('cleanup_error', 'Meranie zlyhalo.')), flush=True)
