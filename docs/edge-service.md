@@ -83,10 +83,47 @@ uvedte oba subory `-f`; zakladny Compose tuto dodatocnu sluzbu neobsahuje.
 
 ## Rozsah overenia
 
-HTTP API a kontrola obsahu odpovedi boli overene lokalnymi automatickymi
-testami. Prenos cez skutocny tunel UERANSIM a pravidlo NAT v Ubuntu VM musi
-potvrdit spustenie `check-edge.py` v labe. Jeden cas HTTP poziadavku nie je
-seriou merani QoS ani dokazom oneskorenia realneho MEC prostredia.
+Historicky pilot z 27.10.2026 je ulozeny v
+`results/edge-20261027-215037-x7doy1sq/summary.json`: stav complete,
+HTTP 201, zdroj UE 10.45.0.5, NAT zdroj UPF 172.18.0.7 a prevod
+23.5 C na 296.65 K. Ide o jeden poziadavok, nie seriu QoS.
 
-Dalsi krok po uspesnom pilote je seria HTTP poziadaviek bez zataze a pocas
-rovnako nastaveneho iperf3 testu, vratane zaznamu CPU a RAM.
+## Opakovatelna seria HTTP
+
+```bash
+sudo python3 scripts/check-edge.py
+sudo python3 scripts/measure-http.py
+```
+
+Predvolene: tri opakovania kazdej skupiny (bez zataze, TCP UL, TCP DL),
+20 poziadaviek v kazdom opakovani, planovany interval zaciatkov 0.4 s,
+TCP trva 16 s s cielom 50 Mbit/s. Poziadavky su sekvencne, bez keep-alive;
+pri pomalej odpovedi sa planovany interval nemusi dodrzat. Skutocne casy
+su v CSV. HTTP zacina 3 s po spusteni ulohy iperf3; samotne cakanie nie
+je dokaz prekryvu.
+
+Po dokonceni sa overi vystup klienta aj servera iperf3 a nenulovy prenos
+v kazdom intervale klienta. Cely HTTP pokus musi lezat v datovom okne
+urcenom timestampom startu a koncom intervalov, so sekundovym odstupom
+od oboch hranic pre celosekundove rozlisenie timestampu. Neskory start,
+timeout alebo nepreukazany prekryv sposobi stav failed. Ide o dokaz prekryvu
+s intervalmi prenosu, nie dokaz obsadenia linky v kazdej mikrosekunde.
+Kazda odpoved sa overuje rovnako ako v pilote vratane request_id a zdroja.
+
+Novy adresar `results/http-*` obsahuje surove HTTP zaznamy JSONL,
+JSON/stderr a prikazy iperf3, CSV, summary.json a report.md.
+Median a p95 sa pocitaju iba z uspesnych odpovedi; p95 je nearest rank
+na indexe ceil(0.95*n). Uspesnost zahrna vsetky pokusy. Trvanie HTTP
+pochadza z merania v klientovi od vytvorenia socketu po precitanie tela,
+nezahrna spustenie procesu nsenter. Nie je to ciste sietove RTT.
+Ponuknuta zataz a dosiahnuta priepustnost prijimaca su oddelene.
+
+Subory resources obsahuju vzorky suroveho CPU /proc/stat, RAM /proc/meminfo
+a load average hostitela pred seriou a po poziadavkach. Nejde o metriku
+samostatneho kontajnera; CPU vytazenie vyzaduje rozdiel pocitadiel vzoriek.
+Verzia Pythonu, jadra, iperf3, hash binarky a identity kontajnerov su v suhrne.
+
+V relacii implementacie bol pristup k Docker socketu zamietnuty aj mimo
+sandboxu a `sudo -n` hlasilo `sudo: a password is required`. Nova seria
+preto zatial nebola overena na aktivnom Compose labe. Historicky uspech
+pilota tento limit nenahradza. Existujuce data MongoDB sa nemenili.
