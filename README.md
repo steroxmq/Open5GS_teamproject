@@ -536,3 +536,10 @@ Test z menneho priestoru UE na adresu 1.1.1.1: 100/100 odpovedi,
 Skript `scripts/demo-open5gs-ueransim.sh` spusta lokalne gNB a UE. Predpoklada,
 ze Open5GS je uz nainstalovany, jeho sluzby su spustene a ucastnik je vytvoreny.
 Ide o nativny variant pre kontrolnu VM, ktory nepouziva Docker Compose.
+
+## HTTP aplikacia a meranie pri zatazi
+
+Postup spustenia interneho HTTP pilota, kontrolu cesty cez TUN a hranice
+interpretacie opisuje [HTTP edge sluzba](docs/edge-service.md).
+Po overeni pilota spustite `sudo python3 scripts/measure-http.py`.
+Seria porovnava cas celeho HTTP poziadavku bez zataze a pri TCP UL/DL 50 Mbit/s.

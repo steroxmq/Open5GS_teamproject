@@ -1,0 +1,25 @@
+services:
+  edge:
+    image: python:3.12-slim-bookworm
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      UPF_IP: "172.18.0.7"
+    command: ["python", "-u", "/app/server.py"]
+    volumes:
+      - ./docker/edge/server.py:/app/server.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks:
+      core:
+        ipv4_address: 172.18.0.30

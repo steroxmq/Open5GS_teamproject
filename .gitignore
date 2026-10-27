@@ -11,3 +11,5 @@ build/
 *.tar.gz
 
 /docker/ueransim/ue.yaml
+__pycache__/
+*.py[cod]
