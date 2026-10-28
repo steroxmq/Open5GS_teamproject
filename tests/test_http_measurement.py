@@ -147,9 +147,18 @@ class SeriesLifecycleTests(unittest.TestCase):
                 future.args = args
                 return future
 
+        real_open = os.open
+
+        def fixture_open(path, *args, **kwargs):
+            # Data aj namespace su simulovane; neotvarat skutocny namespace testu.
+            if str(path).startswith('/proc/') and str(path).endswith('/ns/net'):
+                path = os.devnull
+            return real_open(path, *args, **kwargs)
+
         with contextlib.ExitStack() as stack:
             for obj, name, value in [
                 (m.edge, 'ROOT', root), (m.os, 'geteuid', lambda: 0),
+                (m.os, 'open', fixture_open),
                 (m.iperf, 'select_iperf3', lambda _: (str(binary), 'iperf 3.21')),
                 (m.edge, 'container', lambda service: dict(info, ips=[m.edge.EDGE_IP] if service == 'edge' else info['ips'])),
                 (m.edge, 'command', lambda *a: 'fixture version'), (m.edge, 'dc', lambda *a: 'fixture version'),

@@ -13,3 +13,7 @@ build/
 /docker/ueransim/ue.yaml
 __pycache__/
 *.py[cod]
+
+# Zaloha obsahuje autentizacne udaje ucastnikov a ucty WebUI.
+/backups/
+*.archive.gz

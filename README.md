@@ -9,6 +9,7 @@ Obsah:
 - [Instalacia a spustenie](#docker-compose-overena-konfiguracia)
 - [Meranie TCP a UDP](#6-meranie-tcp-a-udp-v-aktivnom-labe)
 - [Protokol overeneho merania](docs/measurements/compose-2026-10-21.md)
+- [Prenos na server a Proxmox VM](docs/server-migration.md)
 
 ## Ako lab funguje
 
@@ -303,6 +304,10 @@ bezat bez opakovanych restartov. UPF automaticky vytvori a aktivuje rozhranie
 ### 3. Vytvorenie ucastnika v novej databaze
 
 Otvorte WebUI **v prehliadaci Ubuntu VM**: <http://localhost:9998>.
+WebUI sa predvolene publikuje iba na `127.0.0.1` Docker hosta. Zo vzdialeneho
+pocitaca pouzite SSH tunel podla [navodu pre server](docs/server-migration.md).
+V `.env` je mozne nastavit `WEBUI_BIND_IP`; serverovy profil ponechava
+`127.0.0.1`. Zmena IP adresy VM nevyzaduje zmenu vnutornych adries kontajnerov.
 V novej databaze skript `docker/open5gs/config/mongo-init.js` vytvori ucet
 WebUI `admin` s heslom `1423` pre izolovane vyukove prostredie.
 Inicializacia prebehne pri prvom spusteni MongoDB s prazdnym datovym adresarom.

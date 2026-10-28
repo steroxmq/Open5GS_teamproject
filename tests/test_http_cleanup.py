@@ -49,7 +49,17 @@ class PilotCleanupTests(unittest.TestCase):
                     os.kill(os.getpid(), signal.SIGTERM)
 
                 previous = signal.getsignal(signal.SIGTERM)
+                real_open = os.open
+
+                def fixture_open(path, *args, **kwargs):
+                    # Namespace je simulovany; test nepotrebuje pristup do /proc/PID/ns.
+                    if str(path).startswith('/proc/') and str(path).endswith('/ns/net'):
+                        path = os.devnull
+                    return real_open(path, *args, **kwargs)
+
                 with patch.object(edge, 'ROOT', Path(directory)), patch.object(edge.os, 'geteuid', return_value=0), \
+                        patch.object(edge.os, 'open', side_effect=fixture_open), \
+                        patch.object(edge.shutil, 'which', return_value='/fixture/tool'), \
                         patch.object(edge, 'container', side_effect=lambda service: dict(info, ips=[edge.UPF_IP] if service == 'upf' else info['ips'])), \
                         patch.object(edge, 'in_ue', side_effect=in_ue), patch.object(edge, 'dc', return_value=''), \
                         patch.dict(os.environ, {}, clear=True), patch('sys.argv', ['check-edge.py']), \
