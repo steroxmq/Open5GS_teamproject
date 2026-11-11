@@ -463,6 +463,10 @@ TCP zaznamenalo spolu 52 opakovanych prenosov v UL a 46 v DL.
 Presne hodnoty, parametre, identifikatory a hranice overenia su v
 [zazname merania](docs/measurements/compose-2026-10-21.md).
 
+Doplnkova seria vo VirtualBoxe 11.11.2026 s parametrom `--tcp-rate 0` dosiahla
+median 435,976 Mbit/s v UL a 479,104 Mbit/s v DL. Podmienky merania a vysledky
+su v [zazname serie TCP bez limitu iperf3](docs/measurements/compose-tcp-2026-11-11.md).
+
 Systemova verzia iperf3 3.9 v kontrolnej VM pocas TCP UL cakala pri ukonceni
 na zvysok bloku dat, hoci sprava o ukonceni uz bola vo vstupnej fronte
 riadiaceho spojenia. Izolovany iperf3 3.21 tento diagnosticky beh ukoncil
